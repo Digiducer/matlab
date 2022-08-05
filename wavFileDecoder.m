@@ -1,6 +1,7 @@
-function [ CalDate, SN, CalA, CalB, returnVal ] = Wav_file_funct( Wav_file )
-%This file reads the format of a wav_file and spits out the calibration
-%information
+function [ CalDate, SN, CalA, CalB, returnVal ] = wavFileDecoder( Wav_file )
+%wavFileDecoder - This file reads the format of a wav_file and returns back
+% the calibration information
+%
 %   The program first confirms it's a wave file, finds the data chunk for
 %   calibration, extracts that data, and sends it to be plotted and
 %   confirmed

@@ -6,9 +6,10 @@
 % real-time and multiple device/channel, but not continuous.
 % Continuous capture is possible, for 1-2 devices.
 clear y yHist xt1 xt2 xs1 xs2 xavg1 xavg2 xtaxis xfaxis
-if exist('hDSPAR','var')
-    release(hDSPAR);
-    clear hDSPAR
+if exist('deviceReader','var')
+%     release(hDSPAR);
+%     clear hDSPAR
+    release(deviceReader);
 end
 prompt = {'Averages',sprintf('Sample rate - Valid options are\n8000,11025,16000,22050,32000,44100,48000'),'Block size (Max 65536)','Number of Devices','Sensitivity (Ch. A),mV/g or AD counts / (m/s^2)','Sensitivity (Ch. B), mV/g or AD counts / (m/s^2)','Window'};
 % Important note: The 333D01 only supports sample rates of:
@@ -44,12 +45,12 @@ end
 scaleFactorA = 2^23 / sensitivity_ctpmps2A;
 scaleFactorB = 2^23 / sensitivity_ctpmps2B;
 % initialize recording device
-hDSPAR = dsp.AudioRecorder('DeviceName','ASIO4ALL v2');
-hDSPAR.NumChannels = 2;
-hDSPAR.DeviceDataType ='24-bit integer';
+% hDSPAR = dsp.AudioRecorder('DeviceName','ASIO4ALL v2');
+% hDSPAR.NumChannels = 2;
+% hDSPAR.DeviceDataType ='24-bit integer';
 % If buffer overrun occurs, you can try increasing the buffer size or the
 % queue duration. However, the essential problem is that MATLAB takes too
-% long between buffer dumps to variable (caling step(h)), and too much data
+% long between buffer dumps to variable (caling step(h), now deviceReader()), and too much data
 % accumulates. Moving your block size closer to or higher than the sample
 % rate can help as well; e.m/s^2. a sample rate of 48kHz and a block of 8192
 % samples is more likely to cause overrun than 8000 Hz and 8192 samples.
@@ -57,12 +58,14 @@ hDSPAR.DeviceDataType ='24-bit integer';
 % need the higher sample rate. Doing so will greatly increase latency,
 % however. Check documentation for dsp.AudioRecorder for more information
 % on latency.
-hDSPAR.BufferSizeSource ='Auto';
+% hDSPAR.BufferSizeSource ='Auto';
 % h.BufferSizeSource ='Property';
 % h.BufferSize = 4096;
-hDSPAR.QueueDuration = 15;
-hDSPAR.SampleRate = sampleRates;
-hDSPAR.SamplesPerFrame = blockSizes;
+% hDSPAR.QueueDuration = 15;
+% hDSPAR.SampleRate = sampleRates;
+% hDSPAR.SamplesPerFrame = blockSizes;
+deviceReader = audioDeviceReader(sampleRates,blockSizes,'Device','Default',...
+                                 'BitDepth','24-bit integer','NumChannels',2);
 % We need to give ASIO4ALL a chance to get set up for our planned
 % usage.
 % To do so, click on the green arrow icon in the taskbar, and open the
@@ -75,13 +78,16 @@ hDSPAR.SamplesPerFrame = blockSizes;
 % Give ASIO4ALL a second to get initialized
 % grab some data to start up the icon which gives user access to
 % settings
-release(hDSPAR);
-[y] = step(hDSPAR);
+% release(hDSPAR);
+% [y] = step(hDSPAR);
+release(deviceReader);
+y=deviceReader();
 box = msgbox('Please select the ASIO4ALL icon and configure your devices for use.','Configure ASIO4ALL');
 % wait for user action to continue
 uiwait(box);
 % release control of the device until we begin data capture
-release(hDSPAR);
+% release(hDSPAR);
+release(deviceReader);
 pause(1);
 hDSPAR.NumChannels = 2*numDevs;
 % initialize these
@@ -95,26 +101,31 @@ for devIdx = 1:numDevs
     sp(devIdx,3) = subplot(3,1,3);     % Frequency avg
     % Axis scaling
     % time axis - divisions by 1/sampleRate
-    xtaxis(devIdx,:) = (1/hDSPAR.SampleRate)*(0:hDSPAR.SamplesPerFrame-1);
+%     xtaxis(devIdx,:) = (1/hDSPAR.SampleRate)*(0:hDSPAR.SamplesPerFrame-1);
+    xtaxis(devIdx,:) = (1/sampleRates)*(0:blockSizes-1);
     % frequency axis - divisions follow frequency resolution defined by
     % sampleRate / blockSize
-    xfaxis(devIdx,:) = (hDSPAR.SampleRate/(hDSPAR.SamplesPerFrame))*(0:(hDSPAR.SamplesPerFrame/2)-1);
+%     xfaxis(devIdx,:) = (hDSPAR.SampleRate/(hDSPAR.SamplesPerFrame))*(0:(hDSPAR.SamplesPerFrame/2)-1);
+    xfaxis(devIdx,:) = (sampleRates/(blockSizes))*(0:(blockSizes/2)-1);
 end
 if plotAllTime
     % initialize the all-time-history variable for speed
     yHist = zeros(blockSizes*averages,2*numDevs);
 end
-release(hDSPAR); % make sure devices are not already in use before starting capture loop
+% release(hDSPAR); % make sure devices are not already in use before starting capture loop
+release(deviceReader);
 for i=1:averages
     % grab data from device, start buffer loading
-    y = step(hDSPAR);
+%     y = step(hDSPAR);
+    y=deviceReader();
     if plotAllTime
         % copy data to all-time buffer.
         yHist((i-1)*blockSizes+1:(i*blockSizes),:) = y(:,:);
     end
     if ~continuousMode
-        release(hDSPAR); % stop data collection into the buffer to allow time for
+%         release(hDSPAR); % stop data collection into the buffer to allow time for
                     % spectral calculations to complete
+        release(deviceReader);
     end
     for devIdx = 1:numDevs
         % switch to a new figure window for each device
@@ -135,11 +146,13 @@ for i=1:averages
         % get time history for channel A
         xt1(devIdx,:) = y(:,1+(devIdx-1)*2);
         % Compute spectrum for channel A
-        xs1(devIdx,:)=spectralcalc(xt1(devIdx,:)',1,hDSPAR.SamplesPerFrame-1,window); % scaling the halved channel to get the correct vibration amplitude
+%         xs1(devIdx,:)=spectralcalc(xt1(devIdx,:)',1,hDSPAR.SamplesPerFrame-1,window); % scaling the halved channel to get the correct vibration amplitude
+        xs1(devIdx,:)=spectralcalc(xt1(devIdx,:)',1,blockSizes-1,window); % scaling the halved channel to get the correct vibration amplitude
         % get time history for channel B
         xt2(devIdx,:) = y(:,2+(devIdx-1)*2);
         % Compute spectrum for channel B
-        xs2(devIdx,:)=spectralcalc(xt2(devIdx,:)',1,hDSPAR.SamplesPerFrame-1,window);
+%         xs1(devIdx,:)=spectralcalc(xt1(devIdx,:)',1,hDSPAR.SamplesPerFrame-1,window); % scaling the halved channel to get the correct vibration amplitude
+        xs2(devIdx,:)=spectralcalc(xt2(devIdx,:)',1,blockSizes-1,window); % scaling the halved channel to get the correct vibration amplitude
         % averaging
         if i == 1
             % Channel A average for first sample is itself
@@ -212,13 +225,15 @@ if plotAllTime
         % one for ch a and another for ch b
         figure(numDevs +1);
         hold all;
-        plot(1/hDSPAR.SampleRate.*[1:length(yHist(:,1))],yHist(:,2*(idx)-1)*scaleFactorA);
+%         plot(1/hDSPAR.SampleRate.*[1:length(yHist(:,1))],yHist(:,2*(idx)-1)*scaleFactorA);
+        plot(1/sampleRates.*[1:length(yHist(:,1))],yHist(:,2*(idx)-1)*scaleFactorA);
         title('Channel A');
         xlabel('Time (s)');
         ylabel('Acceleration (m/s^2)');
         figure(numDevs +2);
         hold all;
-        plot(1/hDSPAR.SampleRate.*[1:length(yHist(:,1))],yHist(:,2*idx)*scaleFactorB);
+%         plot(1/hDSPAR.SampleRate.*[1:length(yHist(:,1))],yHist(:,2*idx)*scaleFactorB);
+        plot(1/sampleRates.*[1:length(yHist(:,1))],yHist(:,2*idx)*scaleFactorB);
         title('Channel B');
         xlabel('Time (s)');
         ylabel('Acceleration (m/s^2)');
