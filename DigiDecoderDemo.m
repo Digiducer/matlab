@@ -1,55 +1,32 @@
-function [SN CalA CalB CalDate version] = DigiDecoder()
+% DigiDecoderDemo.m
+%
+% This script calls the DigiDecoder function and displays the information
+% returned in a dialog box
+% 
+clear all;
 close all;
-a = audiodevinfo;
-allDevs = {a.input.Name};
-for idx = length(allDevs):-1:1
-    if allDevs{idx}(13:18) ~= '333D01'
-        if allDevs{idx}(13:28) == 'USB Audio Device'
-            msgbox('333D01 not properly detected. Unplug, close MATLAB, replug, and restart MATLAB.');
-        else
-            allDevs(idx)     = [];
-        end
-    end    
-end
-%[selections, ok] = listdlg('PromptString',sprintf('Select which device(s) to decode. (Ctrl+click or click and drag for multiple select)'),'SelectionMode','multiple','ListString',allDevs,'ListSize',[400 100]);
-SN = 0;
-CalA = 0;
-CalB = 0;
-CalDate = '';
-for i = 1:length(allDevs)
-    inputStr = allDevs{i};
-    totalStrLen = length(inputStr);
-    openParenthLocs = findstr(inputStr,'(');
-    closeParenthLocs = findstr(inputStr,')');
-    interface = inputStr(openParenthLocs(2)+1:closeParenthLocs(2)-1);
-    modelStr = inputStr(openParenthLocs(1)+1:closeParenthLocs(1)-1);
-    spaceLoc = findstr(modelStr,' ');
-    model = modelStr(1:spaceLoc-1);
-    encodedStr = modelStr(spaceLoc+1:end);
-    version(i) = str2num(encodedStr(1));
-    
-    switch version(i)
-        case 0
 
-        case 1
-            SN(i) = str2num(encodedStr(2:7));
-            CalA(i) = str2num(encodedStr(8:12));
-            CalB(i) = str2num(encodedStr(13:17));
-            dateString = encodedStr(18:end);
-            yearTens = dateString(1:2);
-            month = dateString(3:4);
-            day = dateString(5:6);
-            year = ['20',yearTens];
-            CalDate{i} = [month,'/',day,'/',year];
-    end
-end
+devices = DigiDecoder();
+
 DisplayBoxStr = '';
-for j = 1:length(SN)
-   DisplayBoxStr = [DisplayBoxStr,sprintf(['Serial number: %i\n',...
-                   'Channel A Calibration: %i counts / m/s^2\n',...
-                   'Channel B Calibration: %i counts / m/s^2\n',...
-                   'Calibration Date: %s\n',...
-                   'Encoding version: %i'],SN(j),CalA(j),CalB(j),CalDate{j},version(j)),sprintf('\n----------------------------------------------------------------------\n')];
+deviceSeperatorText = sprintf('----------------------------------------------------------------------\n');
+for j = 1:length(devices)
+    % build up information for each device
+    serialNumberText = sprintf('Serial Number: %i\n', devices(j).SN);
+    calibrationDateText = sprintf('Calibration Date: %s\n', devices(j).CalDate);
+    modelText = sprintf('Device: %s\n', devices(j).model);
+    versionText = sprintf('Encoding version: %i\n', devices(j).version);
+    if devices(j).version == 0 || devices(j).version == 1 
+        sensitivityText = sprintf('Channel A Sensitivity (counts/(m/s^2)): %i\nChannel B Sensitivity (counts/(m/s^2): %i\n', devices(j).CalA, devices(j).CalB);
+    elseif devices(j).version == 2 || devices(j).version == 3
+        sensitivityText = sprintf('Channel A Sensitivity (counts/Volts-Pk): %i\nChannel B Sensitivity (counts/Volts-Pk): %i\n', devices(j).CalA, devices(j).CalB);
+    else
+        serialNumberText = sprintf('Serial Number: Not Available\n');
+        sensitivityText = sprintf('Channel A Sensitivity (counts/(m/s^2)): %i\nChannel B Sensitivity (counts/(m/s^2)): %i\n', devices(j).CalA, devices(j).CalB);
+    end
+    message = [modelText serialNumberText versionText calibrationDateText sensitivityText deviceSeperatorText];
+    DisplayBoxStr = [DisplayBoxStr message];
 end
-% Put this into the demo app
-    msgbox(DisplayBoxStr,'Decoded Information');
+
+% Display Message Box with all device information
+msgbox(DisplayBoxStr,'Decoded Information','modal');

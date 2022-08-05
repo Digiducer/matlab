@@ -170,6 +170,7 @@ if x(2) == 2
     end
     %decode file for wav file specifics
     [CalDate, SN, CalA, CalB, returnVal] = wavFileDecoder(FileName);
+    device.version = 1;
     %convert SN to string so that it can be displayed easier later if there
     %is no SN
     SN = num2str(SN);
@@ -195,90 +196,105 @@ if x(2) == 2
         errordlg('This wav file is not properly formatted');
     else
         %the wav file has Cal Data and is properly formatted
-        [Y, sampleRate, nbits, ~] = wavread(FileName);
+        info = audioinfo(FileName);
+        sampleRate = info.SampleRate;
+        nbits = info.BitsPerSample;
     end
 %if live data was pushed    
 elseif x(1) == 2
     %set up structure for recording
     continuousMode = true;
-    hDSPAR = dsp.AudioRecorder('DeviceName', 'ASIO4ALL v2');
-    hDSPAR.NumChannels = 2;
-    hDSPAR.DeviceDataType = '24-bit integer';
     %decode the information on the sensor
-    [SN, CalA, CalB, CalDate, version] = DigiDecoder();
-    %determine if there is a cal date
-    if version == 0
-        CalDate = 'Not Available';
+    devices = DigiDecoder();
+    device = devices(1);
+    if length(devices) > 1
+        msgbox(sprintf('Warning, multiple 333D0''s/485b39''s detected.\nDefaulting to %s, serial number %i.',device.model, device.SN),'More than one device','warn','modal');
     end
-        SN = num2str(SN);
-        CalDate = char(CalDate);
+    %determine if there is a cal date
+    if device.version < 1
+        device.CalDate = 'Not Available';
+    end
+    CalDate=device.CalDate;
+    CalA=device.CalA;
+    CalB=device.CalB;
+    SN=device.SN;
 end
 
-%bring in user input specifics 
-expFilterResponseArray = [0.25, 0.5, 0.75];
-expFilterResponse = expFilterResponseArray(get(handles.expFilterResponse, 'Value'));
-percentOverlapArray = [1, 0.25, 0.5, 0.75];
-percentOverlap = percentOverlapArray(get(handles.percentOverlap, 'Value'));
-blockSize = 2^(5+get(handles.blockSize, 'Value'));
-windowTypeArray = {'Flattop', 'Hanning', 'Hann', 'Hamming', 'Blackman-harris'};
-windowType = char(windowTypeArray(get(handles.windowType, 'Value')));
-%decide specifics regarding live data or wav data
-if x(1) == 2
-    sampleRateArray = [8000, 11025, 16000, 22050, 32000, 44100, 48000];
-    sampleRate = sampleRateArray(get(handles.liveDataSampleRate, 'Value'));
-elseif x(2) == 2
-    siz = wavread(FileName, 'size');
-    secLength = siz(1)/sampleRate;
-end
-%initialize structure variables
-hDSPAR.BufferSizeSource = 'Property';
-hDSPAR.SampleRate = sampleRate;
-hDSPAR.SamplesPerFrame = blockSize;
-hDSPAR.BufferSize = 8192;
-hDSPAR.QueueDuration = 5;
-sample = 1;
-%create axes for graphing
-xtaxis = (1/hDSPAR.SampleRate)*(0:hDSPAR.SamplesPerFrame-1);
-xfaxis = (hDSPAR.SampleRate/(hDSPAR.SamplesPerFrame))*(0:(hDSPAR.SamplesPerFrame/2)-1);
-%initialize count
-numofBlocks = 1;
-gcf;
+    %bring in user input specifics 
+    expFilterResponseArray = [0.25, 0.5, 0.75];
+    expFilterResponse = expFilterResponseArray(get(handles.expFilterResponse, 'Value'));
+    percentOverlapArray = [1, 0.25, 0.5, 0.75];
+    percentOverlap = percentOverlapArray(get(handles.percentOverlap, 'Value'));
+    blockSize = 2^(5+get(handles.blockSize, 'Value'));
+    windowTypeArray = {'Flattop', 'Hanning', 'Hann', 'Hamming', 'Blackman-harris'};
+    windowType = char(windowTypeArray(get(handles.windowType, 'Value')));
+    %decide specifics regarding live data or wav data
+    if x(1) == 2
+        sampleRateArray = [8000, 11025, 16000, 22050, 32000, 44100, 48000];
+        sampleRate = sampleRateArray(get(handles.liveDataSampleRate, 'Value'));
+        deviceReader = audioDeviceReader(sampleRate,blockSize,'Device',device.ID,...
+                                         'BitDepth','24-bit integer','NumChannels',2);
+        setup(deviceReader);
+    elseif x(2) == 2
+        info = audioinfo(FileName);
+        siz = info.TotalSamples;
+        secLength = siz(1)/sampleRate;
+    end
+    %initialize structure variables
+    sample = 1;
+    %create axes for graphing
+    xtaxis = (1/sampleRate)*(0:blockSize-1);
+    xfaxis = (sampleRate/(blockSize))*(0:(blockSize/2)-1);
+    %initialize count
+    numofBlocks = 1;
+    gcf;
+
 %continue loop until the stop button is pushed
 while get(handles.stop,'UserData') ~= 1
     %% Frequency display
     if x(1) == 2
         %reads in the live data
-        y = step(hDSPAR);
+        y=deviceReader();
         if ~continuousMode
-            release(hDSPAR);
+            release(deviceReader);
         end
     elseif x(2) == 2
         %reads in wav data
-        y = wavread(FileName, [sample, sample + blockSize-1]);
-        %Select frequency display
+        y = audioread(FileName, [sample, sample + blockSize-1]);
     end
-    %uses the sensitivity to convert to readable units
-    yA = (2^23)/(9.90665*CalA)*y(:,1);
-    yB = (2^23)/(9.90665*CalB)*y(:,2);
+    %uses the sensitivity to convert to readable units (g's or Volts)
+    if device.version == 2 || device.version == 3  % Vpeak
+        yA = (2^23)/(CalA)*y(:,1);
+        yB = (2^23)/(CalB)*y(:,2);
+    else % g's
+        yA = (2^23)/(9.80665*CalA)*y(:,1);
+        yB = (2^23)/(9.80665*CalB)*y(:,2);
+    end
     %sets to timeData axes
     axes(handles.timeData);   
     %creates wav plot 
     if x(2) == 2
-    p1(1) = plot(yA(1:blockSize),'r');
-    p1(2) = plot(yB(1:blockSize), 'k');
-    xlabel('Sample #');    
-    xlim([0 blockSize]);
-    ylim([-1 1]);
-    grid on
+        p1(1) = plot(yA(1:blockSize));
+        p1(2) = plot(yB(1:blockSize));
+        xlabel('Sample #');    
+        xlim([0 blockSize]);
+        ylim([-1 1]);
+        grid on
     end
     %first time only
     if numofBlocks == 1
         %creates live plot for first time
         if x(1) == 2
-            p1 = plot(xtaxis, yA,'r', xtaxis, yB, 'k');
+            p1 = plot(xtaxis, yA, xtaxis, yB);
             xlabel('Time (s)');
             xlim([0 max(xtaxis)]);
             grid on
+        end
+        title('Time Signal');
+        if device.version == 2 || device.version == 3
+            ylabel(sprintf('Voltage'));
+        else
+            ylabel(sprintf('Acceleration\n(g''s)'));
         end
     else
         if x(1) == 2
@@ -287,14 +303,13 @@ while get(handles.stop,'UserData') ~= 1
             grid on
         end
     end
-    title('Wave Function');
-    ylabel(sprintf('Acceleration\n(g''s)'));
+
     %get time data for channel A
     % Compute spectrum for channel A
-    xs1=spectralcalc(yA,1,hDSPAR.SamplesPerFrame-1,windowType); % scaling the halved channel to get the correct vibration amplitude
+    xs1=spectralcalc(yA,1,blockSize-1,windowType); % scaling the halved channel to get the correct vibration amplitude
     % get time data for channel B
     % Compute spectrum for channel B
-    xs2=spectralcalc(yB,1,hDSPAR.SamplesPerFrame-1,windowType);
+    xs2=spectralcalc(yB,1,blockSize-1,windowType);
     % averaging
     %sets to new graph
     axes(handles.instSpectrum);
@@ -308,18 +323,21 @@ while get(handles.stop,'UserData') ~= 1
         %math and graph
         g2 = semilogx(xfaxis,20.*log10(xs1Mag),xfaxis,20.*log10(xs2Mag));
         xlabel('Frequency (Hz)');
-        ylabel(sprintf('Instantaneous Acceleration\n(dB of fullscale)\nAvg #: %i',numofBlocks));
+        title(handles.instSpectrum, 'Instantaneous Frequency Spectrum');
         grid on;
         xlim([0 sampleRate/2]);
         ylim([-160 60]);
         
     else
         %graphs after first time
-        set(g2(2),'XData',xfaxis,'YData',20.*log10(xs1.Magnitude));
-        set(g2(1),'XData',xfaxis,'YData',20.*log10(xs2.Magnitude));
-        ylabel(handles.instSpectrum, sprintf('Instantaneous Acceleration\n(dB g)\nBlock #: %i',numofBlocks));
-        title(handles.instSpectrum, 'Instantaneous Frequency Spectrum');
+        set(g2(1),'XData',xfaxis,'YData',20.*log10(xs1.Magnitude));
+        set(g2(2),'XData',xfaxis,'YData',20.*log10(xs2.Magnitude));
         grid on
+    end
+    if device.version == 2 || device.version == 3
+        ylabel(handles.instSpectrum, sprintf('Instantaneous Voltage\n(dB V)\nBlock #: %i',numofBlocks));
+    else
+        ylabel(handles.instSpectrum, sprintf('Instantaneous Acceleration\n(dB g)\nBlock #: %i',numofBlocks));
     end
     %Compute peak statistics to adjust display
     %finds the top dB peak
@@ -336,18 +354,22 @@ while get(handles.stop,'UserData') ~= 1
         %determines average based on exponential filter response
         p2 = semilogx(xfaxis,20.*log10(xavgsum1),xfaxis,20.*log10(xavgsum2));
         xlabel('Frequency (Hz)');
-        ylabel(sprintf('Avg Acceleration\n(dB of fullscale)\nAvg #: %i',numofBlocks));
         title(handles.avgSpectrum, 'Average Frequency Spectrum');
         grid on;
         xlim([0 sampleRate/2]);
         ylim([-160 60]);
     else
         %graphs after first time
-        set(p2(2),'XData',xfaxis,'YData',20.*log10(xavgsum2));
         set(p2(1),'XData',xfaxis,'YData',20.*log10(xavgsum1));
-        ylabel(handles.avgSpectrum, sprintf('Average Acceleration\n(dB g)\nAvg #: %i',numofBlocks));
+        set(p2(2),'XData',xfaxis,'YData',20.*log10(xavgsum2));
         grid on
     end
+    if device.version == 2 || device.version == 3
+        ylabel(handles.avgSpectrum, sprintf('Average Voltage\n(dB V)\nAvg #: %i',numofBlocks));
+    else
+        ylabel(handles.avgSpectrum, sprintf('Average Acceleration\n(dB g)\nAvg #: %i',numofBlocks));
+    end
+
     %in order to update figure and execute callbacks
     drawnow();
     %determine overlap for wav data
@@ -389,19 +411,37 @@ while get(handles.stop,'UserData') ~= 1
     set(handles.instpeakMagB, 'String', instpeakMagB);
     
     %print out results accordingly
+    serialNumberText = sprintf('Serial Number: %i\n', SN);
+    calibrationDateText = sprintf('Calibration Date: %s\n', CalDate);
+    sampleRateText = sprintf('Sample Rate (Hz): %i\n', sampleRate);
+    numberOfBlocksText = sprintf('Number of Blocks: %i\n',numofBlocks-1);
     if x(1) == 2
-        if version == 1
-            message = sprintf('Serial Number: %s\nCalibration Date: %s\nSample Rate (Hz): %i\nChannel A Sensitivity (counts/(m/s^2)): %i\nChannel B Sensitivity (counts/(m/s^2)): %i\nNumber of Blocks: %i\n', SN, CalDate, sampleRate, CalA, CalB, numofBlocks-1);
+        modelText = sprintf('Device: %s\n',device.model);
+        versionText = sprintf('Encoding version: %i\n', device.version);
+        waveFileInfoText = '';
+        if device.version == 0 || device.version == 1 
+            sensitivityText = sprintf('Channel A Sensitivity (counts/(m/s^2)): %i\nChannel B Sensitivity (counts/(m/s^2): %i\n', CalA, CalB);
+        elseif device.version == 2 || device.version == 3
+            sensitivityText = sprintf('Channel A Sensitivity (counts/Volts-Pk): %i\nChannel B Sensitivity (counts/Volts-Pk): %i\n', CalA, CalB);
+        else
+            serialNumberText = sprintf('Serial Number: Not Available\n');
+            sensitivityText = sprintf('Channel A Sensitivity (counts/(m/s^2)): %i\nChannel B Sensitivity (counts/(m/s^2)): %i\n', CalA, CalB);
         end
     elseif x(2) == 2
-        message = sprintf('WAV File Read: %s\nSerial Number: %s\nCalibration Date: %s\nSample Rate (Hz): %i\nNumber of Bits: %i\nLength of Time (s): %f\nChannel A Sensitivity (counts/(m/s^2)): %i\nChannel B Sensitivity (counts/(m/s^2)): %i\nNumber of Blocks: \n', FileName, SN, CalDate, sampleRate, nbits, secLength, CalA, CalB);
+        modelText = sprintf('WAV File Read: %s\n', FileName);
+        sensitivityText = sprintf('Channel A Sensitivity (counts/(m/s^2)): %i\nChannel B Sensitivity (counts/(m/s^2): %i\n', CalA, CalB);
+        serialNumberText = sprintf('Serial Number: %s\n', SN);
+        versionText = sprintf('Encoding version: %i\n', device.version);
+        waveFileInfoText = sprintf('Number of Bits: %i\nLength of Time (s): %f\n', nbits, secLength);
     end
+    message = [modelText serialNumberText versionText calibrationDateText sensitivityText waveFileInfoText sampleRateText numberOfBlocksText];
     set(handles.wavOutput, 'String', message);
     %determine if there is more data from wav file to fit block size
     if x(2) == 2
         %if no more data, exit
         if (sample + blockSize - 1) >= siz(1)
-            message = sprintf('WAV File Read: %s\nSerial Number: %s\nCalibration Date: %s\nSample Rate (Hz): %i\nNumber of Bits: %i\nLength of Time (s): %f\nChannel A Sensitivity (counts/(m/s^2)): %i\nChannel B Sensitivity (counts/(m/s^2)): %i\nNumber of Blocks: %i\n', FileName, SN, CalDate, sampleRate, nbits, secLength, CalA, CalB, numofBlocks-1);
+            numberOfBlocksText = sprintf('Number of Blocks: %i\n',numofBlocks-1);
+            message = [modelText serialNumberText versionText calibrationDateText sensitivityText waveFileInfoText sampleRateText numberOfBlocksText];
             set(handles.wavOutput, 'String', message);
             return
         end
@@ -409,9 +449,6 @@ while get(handles.stop,'UserData') ~= 1
     numofBlocks = numofBlocks +1;
     pause(0.000001)
 end
-
-
-
 
 function wavOutput_Callback(hObject, eventdata, handles)
 % % hObject    handle to wavOutput (see GCBO)
