@@ -55,8 +55,7 @@ for i = 1:length(readerDevices)
             day = dateString(5:6);
             year = ['20',yearTens];
             devices(i).CalDate = [month,'/',day,'/',year];
-        case 2
-        case 3
+        case {2, 3}
             devices(i).CalA = str2double(encodedStr(8:14));
             devices(i).CalB = str2double(encodedStr(15:21));
             if devices(i).version == 3
